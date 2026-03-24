@@ -1,0 +1,13 @@
+services:
+  game-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: my-game-api
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__MongoDb=${MONGODB_CONNECTION_STRING}
+      - MongoDb__DatabaseName=${MONGODB_DATABASE}
+      - AdminPassword=${ADMIN_PASSWORD}

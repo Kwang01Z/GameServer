@@ -1,0 +1,9 @@
+# .gitignore
+*.env
+bin/
+obj/
+*.user
+.idea/
+.vs/
+*.swp
+out/
