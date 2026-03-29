@@ -26,7 +26,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(); // Enable Swagger UI (interactive page)
 }
 
-//app.UseHttpsRedirection();
+app.UseHttpsRedirection();
 
 app.MapGet("/", () => Results.Redirect("/swagger"));
 app.MapControllers();
