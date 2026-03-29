@@ -99,12 +99,6 @@ public class GameDataController : ControllerBase
             return BadRequest(new ApiResponse(ex.Message));
         }
     }
-
-    [HttpGet("supported-games")]
-    public IActionResult GetSupportedGames()
-    {
-        return Ok(_mongoDbService.GetSupportedGames());
-    }
 }
 
 [MemoryPackable]
