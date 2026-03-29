@@ -13,11 +13,14 @@ public partial class GameData
     public string? Id { get; set; }
 
     [MemoryPackOrder(0)]
-    public string PlayerId { get; set; } = string.Empty;
+    public string GameName { get; set; } = string.Empty;
 
     [MemoryPackOrder(1)]
-    public byte[] Data { get; set; } = Array.Empty<byte>();
+    public string PlayerId { get; set; } = string.Empty;
 
     [MemoryPackOrder(2)]
+    public byte[] Data { get; set; } = Array.Empty<byte>();
+
+    [MemoryPackOrder(3)]
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 }

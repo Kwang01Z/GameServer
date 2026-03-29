@@ -21,59 +21,100 @@ public class GameDataController : ControllerBase
     [HttpPost("save")]
     public async Task<IActionResult> Save([FromBody] GameData gameData)
     {
-        gameData.LastUpdated = DateTime.UtcNow;
-        await _mongoDbService.CreateAsync(gameData);
-        return Ok(new ApiResponse("Dữ liệu game đã được lưu", gameData.Id));
-    }
-
-    [HttpGet("get/{playerId}")]
-    public async Task<ActionResult<GameData?>> Get(string playerId)
-    {
-        var gameData = await _mongoDbService.GetAsync(playerId);
-        if (gameData == null)
+        try
         {
-            return NotFound(new ApiResponse("Không tìm thấy dữ liệu cho người chơi này"));
+            gameData.LastUpdated = DateTime.UtcNow;
+            await _mongoDbService.CreateAsync(gameData.GameName, gameData);
+            return Ok(new ApiResponse("Dữ liệu game đã được lưu", gameData.Id));
         }
-        return Ok(gameData);
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiResponse(ex.Message));
+        }
     }
 
-    [HttpDelete("delete/{playerId}")]
-    public async Task<IActionResult> Delete(string playerId, [FromQuery] string password)
+    [HttpPost("get")]
+    public async Task<ActionResult<GameData?>> Get([FromBody] GetRequest request)
     {
-        if (password != _adminPassword)
+        try
+        {
+            var gameData = await _mongoDbService.GetAsync(request.GameName, request.PlayerId);
+            if (gameData == null)
+            {
+                return NotFound(new ApiResponse("Không tìm thấy dữ liệu cho người chơi này"));
+            }
+            return Ok(gameData);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiResponse(ex.Message));
+        }
+    }
+
+    [HttpPost("delete")]
+    public async Task<IActionResult> Delete([FromBody] DeleteRequest request)
+    {
+        if (request.Password != _adminPassword)
         {
             return Unauthorized(new ApiResponse("Mật khẩu không chính xác"));
         }
 
-        // Logic xóa (cần thêm method vào MongoDbService)
-        var deleted = await _mongoDbService.DeleteAsync(playerId);
-        if (!deleted)
+        try
         {
-            return NotFound(new ApiResponse("Không tìm thấy dữ liệu để xóa"));
+            var deleted = await _mongoDbService.DeleteAsync(request.GameName, request.PlayerId);
+            if (!deleted)
+            {
+                return NotFound(new ApiResponse("Không tìm thấy dữ liệu để xóa"));
+            }
+            return Ok(new ApiResponse("Dữ liệu đã được xóa thành công"));
         }
-
-        return Ok(new ApiResponse("Dữ liệu đã được xóa thành công"));
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiResponse(ex.Message));
+        }
     }
 
-    [HttpGet("generate")]
     [HttpPost("generate")]
     public async Task<IActionResult> GenerateRandom()
     {
-        var random = new Random();
-        var randomBytes = new byte[32]; // Tạo 32 bytes ngẫu nhiên
-        random.NextBytes(randomBytes);
-
-        var gameData = new GameData
+        try
         {
-            PlayerId = "User_" + Guid.NewGuid().ToString().Substring(0, 8),
-            Data = randomBytes,
-            LastUpdated = DateTime.UtcNow
-        };
+            var random = new Random();
+            var randomBytes = new byte[32];
+            random.NextBytes(randomBytes);
 
-        await _mongoDbService.CreateAsync(gameData);
-        return Ok(new GenerateResponse("Dữ liệu game ngẫu nhiên đã được tạo và lưu", gameData));
+            var gameData = new GameData
+            {
+                GameName = "DefendersOfTheDawn",
+                PlayerId = "User_" + Guid.NewGuid().ToString().Substring(0, 8),
+                Data = randomBytes,
+                LastUpdated = DateTime.UtcNow
+            };
+
+            await _mongoDbService.CreateAsync(gameData.GameName, gameData);
+            return Ok(new GenerateResponse("Dữ liệu game ngẫu nhiên đã được tạo và lưu", gameData));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ApiResponse(ex.Message));
+        }
+    }
+
+    [HttpGet("supported-games")]
+    public IActionResult GetSupportedGames()
+    {
+        return Ok(_mongoDbService.GetSupportedGames());
     }
 }
+
+[MemoryPackable]
+public partial record GetRequest(string GameName, string PlayerId);
+
+[MemoryPackable]
+public partial record DeleteRequest(string GameName, string PlayerId, string Password);
+
+[MemoryPackable]
+public partial record GenerateRequest(string GameName);
 
 [MemoryPackable]
 public partial record ApiResponse(string Message, string? Id = null);

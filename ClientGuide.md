@@ -1,9 +1,9 @@
-# Hướng dẫn tạo Client API gửi và nhận dữ liệu Game
+# Hướng dẫn tạo Client API gửi và nhận dữ liệu Game (v2)
 
-Tài liệu này hướng dẫn cách xây dựng một lớp Client đơn giản trong C# (Unity hoặc .NET) để giao tiếp với Game Server của bạn.
+Tài liệu này hướng dẫn cách xây dựng Client để giao tiếp với Game Server (phiên bản bảo mật: dữ liệu truyền trong Body và hỗ trợ đa Game).
 
 ## 1. Chuẩn bị Model phía Client
-Bạn cần cài đặt thư viện `MemoryPack` phía Client và định nghĩa model giống như Server:
+Cài đặt thư viện `MemoryPack` và định nghĩa model giống như Server. Lưu ý thứ tự `MemoryPackOrder` cực kỳ quan trọng:
 
 ```csharp
 using MemoryPack;
@@ -12,95 +12,133 @@ using System;
 [MemoryPackable]
 public partial class GameData
 {
-    // Không cần field Id vì server tự sinh
     [MemoryPackOrder(0)]
-    public string PlayerId { get; set; } = string.Empty;
+    public string GameName { get; set; } = string.Empty; // Tên game (ví dụ: DefendersOfTheDawn)
 
     [MemoryPackOrder(1)]
-    public byte[] Data { get; set; } = Array.Empty<byte>();
+    public string PlayerId { get; set; } = string.Empty;
 
     [MemoryPackOrder(2)]
-    public DateTime LastUpdated { get; set; }
+    public byte[] Data { get; set; } = Array.Empty<byte>();
+
+    [MemoryPackOrder(3)]
+    public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 }
+
+// Request Data cho các phương thức khác
+[MemoryPackable]
+public partial record GetRequest(string GameName, string PlayerId);
+
+[MemoryPackable]
+public partial record DeleteRequest(string GameName, string PlayerId, string Password);
+
+[MemoryPackable]
+public partial record GenerateRequest(string GameName);
 ```
 
-## 2. Lớp GameApiClient
-Dưới đây là lớp helper để bạn thực hiện các thao tác Save, Get và Delete.
+## 2. Lớp GameApiClient Pro
+Lớp helper xử lý logic POST Body và các mã lỗi mới (như 429 - Quá tải request).
 
 ```csharp
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading.Tasks;
 using MemoryPack;
+using Newtonsoft.Json;
 
 public class GameApiClient
 {
-    private static readonly HttpClient client = new HttpClient();
-    private string _baseUrl;
+    private static readonly HttpClient _client = new HttpClient();
+    private readonly string _baseUrl;
 
     public GameApiClient(string baseUrl)
     {
         _baseUrl = baseUrl.TrimEnd('/');
     }
 
-    // 1. Lưu dữ liệu (Nén MemoryPack)
-    public async Task SaveData(string playerId, byte[] rawData)
+    // 1. Lưu dữ liệu (Nén binary qua MemoryPack)
+    public async Task SaveData(string gameName, string playerId, byte[] rawData)
     {
-        var gameData = new GameData { PlayerId = playerId, Data = rawData };
+        var gameData = new GameData { GameName = gameName, PlayerId = playerId, Data = rawData };
         byte[] binary = MemoryPackSerializer.Serialize(gameData);
 
         var content = new ByteArrayContent(binary);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/x-memorypack");
 
-        var response = await client.PostAsync($"{_baseUrl}/api/save", content);
-        response.EnsureSuccessStatusCode();
-        Console.WriteLine("Lưu dữ liệu thành công!");
+        var response = await _client.PostAsync($"{_baseUrl}/api/save", content);
+        await HandleResponse(response);
     }
 
-    // 2. Lấy dữ liệu (Nhận JSON từ Swagger hoặc Binary nếu cấu hình thêm)
-    public async Task<GameData> GetData(string playerId)
+    // 2. Lấy dữ liệu (Dùng POST để gửi body kín)
+    public async Task<GameData> GetData(string gameName, string playerId)
     {
-        var response = await client.GetAsync($"{_baseUrl}/api/get/{playerId}");
-        response.EnsureSuccessStatusCode();
+        var request = new GetRequest(gameName, playerId);
+        var json = JsonConvert.SerializeObject(request);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        // Mặc định server trả JSON cho trình duyệt/client thông thường
-        string json = await response.Content.ReadAsStringAsync();
-        return Newtonsoft.Json.JsonConvert.DeserializeObject<GameData>(json);
+        var response = await _client.PostAsync($"{_baseUrl}/api/get", content);
+        await HandleResponse(response);
+
+        string responseJson = await response.Content.ReadAsStringAsync();
+        return JsonConvert.DeserializeObject<GameData>(responseJson);
     }
 
-    // 3. Xóa dữ liệu (Yêu cầu mật khẩu)
-    public async Task DeleteData(string playerId, string password)
+    // 3. Xóa dữ liệu (Kèm mật khẩu Admin)
+    public async Task DeleteData(string gameName, string playerId, string password)
     {
-        var response = await client.DeleteAsync($"{_baseUrl}/api/delete/{playerId}?password={password}");
-        if (response.IsSuccessStatusCode)
+        var request = new DeleteRequest(gameName, playerId, password);
+        var json = JsonConvert.SerializeObject(request);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PostAsync($"{_baseUrl}/api/delete", content);
+        await HandleResponse(response);
+    }
+
+    private async Task HandleResponse(HttpResponseMessage response)
+    {
+        if (response.StatusCode == (HttpStatusCode)429)
         {
-            Console.WriteLine("Xóa dữ liệu thành công!");
+            string msg = await response.Content.ReadAsStringAsync();
+            throw new Exception($"Rate Limited: {msg}");
         }
-        else
+        
+        if (!response.IsSuccessStatusCode)
         {
             string error = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"Lỗi xóa: {error}");
+            throw new Exception($"Server Error ({response.StatusCode}): {error}");
         }
     }
 }
 ```
 
 ## 3. Cách sử dụng
+
 ```csharp
 var api = new GameApiClient("https://localhost:7103");
+string myGame = "DefendersOfTheDawn";
 
-// Lưu
-await api.SaveData("Player_001", new byte[] { 1, 2, 3, 4 });
+try 
+{
+    // Lưu
+    await api.SaveData(myGame, "User_99", new byte[] { 255, 128, 64 });
 
-// Lấy
-var data = await api.GetData("Player_001");
+    // Lấy
+    var data = await api.GetData(myGame, "User_99");
 
-// Xóa (Mật khẩu mặc định là admin123)
-await api.DeleteData("Player_001", "admin123");
+    // Xóa
+    await api.DeleteData(myGame, "User_99", "admin@123");
+}
+catch (Exception ex)
+{
+    Console.WriteLine(ex.Message);
+}
 ```
 
 ---
-**Lưu ý:**
-- **Endpoint mới:** `/api/save`, `/api/get/{playerId}`, `/api/delete/{playerId}`.
-- **Mật khẩu xóa:** Có thể thay đổi trong code Server hoặc `appsettings.json`.
+### ⚠️ Lưu ý Quan trọng:
+1.  **Chặn Request (Rate Limiting)**: Server giới hạn **5 requests / 10 giây** cho mỗi IP. Nếu vượt quá, bạn sẽ nhận lỗi HTTP 429. Hãy đảm bảo client không spam API.
+2.  **Thông tin trong Body**: Không còn truyền dữ liệu nhạy cảm qua URL. Tất cả (GameName, PlayerId, Password) hiện đã nằm trong Request Body.
+3.  **Game Name**: Tên game gửi lên phải khớp chính xác với danh sách `SupportedGames` trong cấu hình server.
